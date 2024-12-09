@@ -1,0 +1,27 @@
+# Compilation file deletion
+
+.idea/
+Api/.idea
+
+obj/
+bin/
+
+.vs/
+
+# Deletion of the configuration file to avoid capturing authentication credentials.
+Api/WebApi/appsettings.json
+
+# Ignore DB migrations data
+Migrations/
+
+# Ignore Visual Studio temporary files, build results, and
+# user-specific files
+*.user
+*.rsuser
+*.suo
+*.vcxproj.user
+.vscode/
+
+# Ignore coverage report
+coverage_report
+coverage.opencover.xml

@@ -1,0 +1,28 @@
+﻿services:
+  cis:
+    image: cis-api
+    container_name: cis-container
+    ports:
+      - "8081:8080"
+    environment:
+      - CONNECTION_STRING=
+      - DATABASE_MONGO=
+      - JWT_SECRET=
+    networks:
+      - api-network
+    
+  db:
+    image: mongo
+    container_name: mongo-container
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=
+      - MONGO_INITDB_ROOT_PASSWORD=
+    networks:
+      - api-network
+  
+
+networks:
+  api-network:
+    external: true

@@ -1,0 +1,97 @@
+image: mcr.microsoft.com/dotnet/sdk:8.0
+
+stages:
+  - build
+  - test
+  - publish
+  - deploy
+
+variables:
+  TAG_LATEST: $CI_REGISTRY_IMAGE/$CI_COMMIT_REF_NAME:latest
+  TAG_COMMIT: $CI_REGISTRY_IMAGE/$CI_COMMIT_REF_NAME:$CI_COMMIT_SHORT_SHA
+  NUGET_PACKAGES: $CI_PROJECT_DIR/.nuget/packages
+  EXE_RELEASE_FOLDER: 'bin/Release'
+  COVERAGE_REPORT_FOLDER: 'coveragereport'
+  MIN_COVERAGE: 80
+
+cache:
+  paths:
+    - .nuget/packages
+
+build:
+  stage: build
+  script:
+    - echo "Starting the project build"
+    - cd Api 
+    - dotnet restore 
+    - dotnet build --configuration Release  
+    - dotnet tool install -g dotnet-format
+    - dotnet format Api.sln
+    - dotnet format --verify-no-changes
+  only:
+    - merge_request
+  artifacts:
+    paths:
+      - $EXE_RELEASE_FOLDER 
+    expire_in: 1 week 
+
+test:
+  stage: test
+  script:
+    - echo "Beginning project integration testing"
+    - cd Api
+    - dotnet new tool-manifest
+    - dotnet tool install --local dotnet-reportgenerator-globaltool  
+    - dotnet test /p:CollectCoverage=true /p:CoverletOutputFormat=opencover /p:ExcludeByFile="**/Program.cs" /p:ExcludeByAttribute="ExcludeFromCodeCoverage"
+    - mkdir -p $COVERAGE_REPORT_FOLDER
+    - dotnet reportgenerator -reports:"**/coverage.opencover.xml" -targetdir:"$COVERAGE_REPORT_FOLDER" -reporttypes:Html
+    - echo "Coverage Report:"
+    - cat $COVERAGE_REPORT_FOLDER/index.html | grep -zo 'Line coverage:[^%]*%'
+    - coverage=$(cat $COVERAGE_REPORT_FOLDER/index.html | grep -zo 'Line coverage:[^%]*%' | tr -d '\n' | sed -E 's/.*>([0-9]+)\.[0-9]+%.*/\1/')
+    - echo "Current coverage $coverage%"
+    - if (( coverage < MIN_COVERAGE )); then
+    - echo "Coverage is below $MIN_COVERAGE%. Pipeline failed."
+    - exit 1
+    - fi
+  coverage: '/([0-9]+\.[0-9]+)%/'
+  only:
+    - merge_request
+  dependencies:
+    - build  
+  artifacts:
+    paths:
+      - Api/$COVERAGE_REPORT_FOLDER  
+    expire_in: 1 week
+
+publish: 
+  only:
+    - main
+    - migration/mongo
+  image: docker:latest
+  stage: publish
+  services:
+    - docker:dind
+  script:
+    - docker build -t $TAG_COMMIT -t $TAG_LATEST ./Api
+    - docker login -u gitlab-ci-token -p $CI_JOB_TOKEN $CI_REGISTRY
+    - docker push $TAG_COMMIT
+    - docker push $TAG_LATEST
+
+deploy:
+  only:
+    - main
+    - migration/mongo
+  image: alpine:latest
+  stage: deploy
+  tags:
+    - deployment
+  script:
+    - chmod go= $ID_RSA
+    - apk update && apk add openssh-client
+    - ssh -i $ID_RSA -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_IP "docker login -u gitlab-ci-token -p $CI_JOB_TOKEN $CI_REGISTRY"
+    - ssh -i $ID_RSA -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_IP "docker pull $TAG_COMMIT"
+    - ssh -i $ID_RSA -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_IP "docker container rm -f cis-api || true"
+    - ssh -i $ID_RSA -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_IP "docker run -d --network api-network --name cis-api -p 8081:8080 
+      -e CONNECTION_STRING='$MONGO_CONNECTION' 
+      -e DATABASE_MONGO='$MONGO_DATABASE'
+      -e JWT_SECRET='$ACCESS_KEY' $TAG_COMMIT"
