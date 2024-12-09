@@ -1,0 +1,61 @@
+image: mcr.microsoft.com/dotnet/sdk:8.0
+
+stages:
+  - build
+  - test
+  - deploy
+
+variables:
+  NUGET_PACKAGES: $CI_PROJECT_DIR/.nuget/packages
+  EXE_RELEASE_FOLDER: 'bin/Release'
+  COVERAGE_REPORT_FOLDER: 'coveragereport'
+  MIN_COVERAGE: 80
+
+cache:
+  paths:
+    - .nuget/packages
+
+build:
+  stage: build
+  script:
+    - echo "Starting the project build"
+    - cd Api 
+    - dotnet restore 
+    - dotnet build --configuration Release  
+    - dotnet tool install -g dotnet-format
+    - dotnet format Api.sln
+    - dotnet format --verify-no-changes
+  only:
+    - merge_request
+  artifacts:
+    paths:
+      - $EXE_RELEASE_FOLDER 
+    expire_in: 1 week 
+
+test:
+  stage: test
+  script:
+    - echo "Beginning project integration testing"
+    - cd Api
+    - dotnet new tool-manifest
+    - dotnet tool install --local dotnet-reportgenerator-globaltool  
+    - dotnet test /p:CollectCoverage=true /p:CoverletOutputFormat=opencover /p:ExcludeByFile="**/Program.cs" /p:ExcludeByAttribute="ExcludeFromCodeCoverage"
+    - mkdir -p $COVERAGE_REPORT_FOLDER
+    - dotnet reportgenerator -reports:"**/coverage.opencover.xml" -targetdir:"$COVERAGE_REPORT_FOLDER" -reporttypes:Html
+    - echo "Coverage Report:"
+    - cat $COVERAGE_REPORT_FOLDER/index.html | grep -zo 'Line coverage:[^%]*%'
+    - coverage=$(cat $COVERAGE_REPORT_FOLDER/index.html | grep -zo 'Line coverage:[^%]*%' | tr -d '\n' | sed -E 's/.*>([0-9]+)\.[0-9]+%.*/\1/')
+    - echo "Current coverage $coverage%"
+    - if (( coverage < MIN_COVERAGE )); then
+    - echo "Coverage is below $MIN_COVERAGE%. Pipeline failed."
+    - exit 1
+    - fi
+  coverage: '/([0-9]+\.[0-9]+)%/'
+  only:
+    - merge_request
+  dependencies:
+    - build  
+  artifacts:
+    paths:
+      - Api/$COVERAGE_REPORT_FOLDER  
+    expire_in: 1 week  
